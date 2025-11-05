@@ -1,0 +1,324 @@
+version: '3.8'
+
+services:
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: monkdb-zookeeper-qa
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka
+    container_name: monkdb-kafka-qa
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # MonkDB Stub (using MongoDB for QA)
+  monkdb:
+    image: mongo:7.0
+    hostname: monkdb
+    container_name: monkdb-qa
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONKDB_PASSWORD:-qa_password}
+      MONGO_INITDB_DATABASE: monkdb_qa
+    volumes:
+      - monkdb_data:/data/db
+      - ./scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # PostgreSQL for Airflow metadata
+  postgres:
+    image: postgres:15
+    hostname: postgres
+    container_name: monkdb-postgres-qa
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qa_airflow_password}
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Redis for Airflow Celery
+  redis:
+    image: redis:7.2-alpine
+    hostname: redis
+    container_name: monkdb-redis-qa
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  # Airflow Webserver
+  airflow-webserver:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.airflow
+    hostname: airflow-webserver
+    container_name: monkdb-airflow-webserver-qa
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:-qa_airflow_password}@postgres/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:${POSTGRES_PASSWORD:-qa_airflow_password}@postgres/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'false'
+      AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/logs:/opt/airflow/logs
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../config:/opt/airflow/config
+    ports:
+      - "8080:8080"
+    command: webserver
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Airflow Scheduler
+  airflow-scheduler:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.airflow
+    hostname: airflow-scheduler
+    container_name: monkdb-airflow-scheduler-qa
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:-qa_airflow_password}@postgres/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:${POSTGRES_PASSWORD:-qa_airflow_password}@postgres/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/logs:/opt/airflow/logs
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../config:/opt/airflow/config
+    command: scheduler
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Airflow Worker (scaled)
+  airflow-worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.airflow
+    hostname: airflow-worker
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:-qa_airflow_password}@postgres/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:${POSTGRES_PASSWORD:-qa_airflow_password}@postgres/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/logs:/opt/airflow/logs
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../config:/opt/airflow/config
+    command: celery worker
+    networks:
+      - monkdb-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # Spark Master
+  spark-master:
+    image: bitnami/spark:3.5.3
+    hostname: spark-master
+    container_name: monkdb-spark-master-qa
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_MASTER_OPTS=-Dspark.deploy.defaultCores=2
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+    volumes:
+      - ../spark:/opt/spark/work-dir
+    networks:
+      - monkdb-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Spark Workers (scaled)
+  spark-worker:
+    image: bitnami/spark:3.5.3
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=4G
+      - SPARK_WORKER_CORES=4
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ../spark:/opt/spark/work-dir
+    networks:
+      - monkdb-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # API Service
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    hostname: api
+    depends_on:
+      - monkdb
+      - kafka
+    environment:
+      - ENVIRONMENT=qa
+      - MONKDB_URI=mongodb://admin:${MONKDB_PASSWORD:-qa_password}@monkdb:27017/monkdb_qa?authSource=admin
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - API_SECRET_KEY=${API_SECRET_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../api:/app/api
+      - ../config:/app/config
+    networks:
+      - monkdb-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+volumes:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
+  monkdb_data:
+  postgres_data:
+  redis_data:
+
+networks:
+  monkdb-network:
+    driver: bridge
