@@ -23,7 +23,7 @@ async def health_check(request: Request) -> ResponseModel:
             "environment": "development"  # This should come from config
         }
         
-        logger.info("Health check requested", client_ip=request.client.host)
+        logger.info("Health check requested", client_ip=request.client.host if request.client else "unknown")
         
         return ResponseModel.success_response(
             data=health_data,
@@ -47,7 +47,8 @@ async def detailed_health_check(request: Request) -> ResponseModel:
             service=ServiceType.API,
             status=HealthStatus.HEALTHY,
             response_time_ms=1.0,
-            details={"uptime": "running"}
+            details={"uptime": "running"},
+            error_message=None
         )
         health_checks.append(api_check)
         
@@ -59,12 +60,15 @@ async def detailed_health_check(request: Request) -> ResponseModel:
                 service=ServiceType.DATABASE,
                 status=HealthStatus.HEALTHY,
                 response_time_ms=5.0,
-                details={"connection": "active"}
+                details={"connection": "active"},
+                error_message=None
             )
         except Exception as e:
             db_check = HealthCheckModel(
                 service=ServiceType.DATABASE,
                 status=HealthStatus.UNHEALTHY,
+                response_time_ms=None,
+                details=None,
                 error_message=str(e)
             )
             overall_status = HealthStatus.UNHEALTHY
@@ -79,12 +83,15 @@ async def detailed_health_check(request: Request) -> ResponseModel:
                 service=ServiceType.KAFKA,
                 status=HealthStatus.HEALTHY,
                 response_time_ms=10.0,
-                details={"brokers": "connected"}
+                details={"brokers": "connected"},
+                error_message=None
             )
         except Exception as e:
             kafka_check = HealthCheckModel(
                 service=ServiceType.KAFKA,
                 status=HealthStatus.UNHEALTHY,
+                response_time_ms=None,
+                details=None,
                 error_message=str(e)
             )
             if overall_status == HealthStatus.HEALTHY:
@@ -101,7 +108,7 @@ async def detailed_health_check(request: Request) -> ResponseModel:
         logger.info(
             "Detailed health check completed",
             overall_status=overall_status.value,
-            client_ip=request.client.host
+            client_ip=request.client.host if request.client else "unknown"
         )
         
         # Return appropriate HTTP status
@@ -138,7 +145,7 @@ async def readiness_check(request: Request) -> ResponseModel:
         await db_service.ping()
         await kafka_service.ping()
         
-        logger.info("Readiness check passed", client_ip=request.client.host)
+        logger.info("Readiness check passed", client_ip=request.client.host if request.client else "unknown")
         
         return ResponseModel.success_response(
             data={"ready": True, "timestamp": datetime.utcnow().isoformat()},

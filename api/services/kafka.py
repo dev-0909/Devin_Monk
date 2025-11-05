@@ -232,7 +232,9 @@ class KafkaService:
             async for message in consumer:
                 try:
                     # Process message
-                    await message_handler(message.value)
+                    result = message_handler(message.value)
+                    if result is not None:
+                        await result
                     
                     message_count += 1
                     

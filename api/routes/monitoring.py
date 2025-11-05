@@ -3,7 +3,7 @@
 import structlog
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException, Query, Depends
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from api.models.monitoring import MetricsModel, SystemMetricsModel, ApplicationMetricsModel, AlertModel
 from api.models.base import ResponseModel, PaginationModel
@@ -156,7 +156,7 @@ async def list_alerts(
     """List alerts with pagination."""
     try:
         # Build query filter
-        query_filter = {}
+        query_filter: Dict[str, Any] = {}
         if severity:
             query_filter["severity"] = severity
         if active_only:
