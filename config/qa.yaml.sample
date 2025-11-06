@@ -1,0 +1,122 @@
+# QA Environment Configuration
+# Copy this file to qa.yaml and customize for your QA environment
+
+# Override base configuration for QA
+app:
+  debug: false
+
+# QA Database Settings
+database:
+  monkdb:
+    host: "monkdb"
+    port: 27017
+    database: "monkdb_qa"
+    username: "admin"
+    password: "${MONKDB_PASSWORD}"
+    auth_source: "admin"
+    connection_pool_size: 20
+    max_idle_time_ms: 60000
+
+  postgres:
+    host: "postgres"
+    port: 5432
+    database: "airflow"
+    username: "airflow"
+    password: "${POSTGRES_PASSWORD}"
+    pool_size: 10
+    max_overflow: 20
+
+# QA Kafka Settings
+kafka:
+  bootstrap_servers: "kafka:29092"
+  consumer_group_id: "monkdb-qa-consumers"
+  auto_commit_interval_ms: 5000
+  session_timeout_ms: 45000
+  max_poll_records: 1000
+  topics:
+    data_ingestion: "qa.data.ingestion"
+    data_processing: "qa.data.processing"
+    data_output: "qa.data.output"
+    monitoring: "qa.platform.monitoring"
+
+# QA Spark Settings
+spark:
+  master: "spark://spark-master:7077"
+  executor_memory: "4g"
+  executor_cores: 4
+  driver_memory: "2g"
+  max_result_size: "2g"
+  executor_instances: 4
+
+# QA API Settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+  reload: false
+  workers: 4
+  secret_key: "${API_SECRET_KEY}"
+  cors_origins:
+    - "https://qa-frontend.monkdb.com"
+    - "https://qa-admin.monkdb.com"
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 200
+
+# QA Logging
+logging:
+  loggers:
+    "":
+      level: "INFO"
+      handlers: ["console", "file"]
+      propagate: false
+    "uvicorn":
+      level: "INFO"
+    "kafka":
+      level: "WARNING"
+    "sqlalchemy.engine":
+      level: "WARNING"
+
+# QA Monitoring
+monitoring:
+  metrics:
+    enabled: true
+    port: 9090
+  health_check:
+    enabled: true
+    timeout: 30
+  tracing:
+    enabled: true
+    jaeger_endpoint: "${JAEGER_ENDPOINT}"
+
+# QA Security
+security:
+  authentication:
+    jwt_secret: "${JWT_SECRET}"
+    jwt_algorithm: "HS256"
+    jwt_expiration_hours: 8  # Shorter for QA testing
+  authorization:
+    rbac_enabled: true
+    default_role: "qa_tester"
+
+# QA Data Processing
+data_processing:
+  batch_size: 2000
+  max_retries: 3
+  retry_delay_seconds: 10
+  timeout_seconds: 600
+  checkpointing:
+    enabled: true
+    interval_seconds: 120
+    location: "/opt/checkpoints"
+
+# QA-specific Airflow settings
+airflow:
+  parallelism: 64
+  dag_concurrency: 32
+  max_active_runs_per_dag: 8
+  max_active_tasks_per_dag: 32
+  dagbag_import_timeout: 60
+  email_on_failure: true
+  email_on_retry: false
+  default_email: "qa-team@monkdb.com"

@@ -1,0 +1,93 @@
+# Development Environment Configuration
+# Copy this file to dev.yaml and customize for your local development setup
+
+# Override base configuration for development
+app:
+  debug: true
+
+# Development Database Settings
+database:
+  monkdb:
+    host: "localhost"
+    port: 27017
+    database: "monkdb_dev"
+    username: "admin"
+    password: "password"
+    auth_source: "admin"
+
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "airflow"
+    username: "airflow"
+    password: "airflow"
+
+# Development Kafka Settings
+kafka:
+  bootstrap_servers: "localhost:9092"
+  consumer_group_id: "monkdb-dev-consumers"
+  topics:
+    data_ingestion: "dev.data.ingestion"
+    data_processing: "dev.data.processing"
+    data_output: "dev.data.output"
+    monitoring: "dev.platform.monitoring"
+
+# Development Spark Settings
+spark:
+  master: "spark://localhost:7077"
+  executor_memory: "1g"
+  executor_cores: 1
+  driver_memory: "512m"
+
+# Development API Settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+  debug: true
+  reload: true
+  workers: 1
+  secret_key: "dev-secret-key-change-in-production"
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+    - "http://localhost:8081"
+
+# Development Logging
+logging:
+  loggers:
+    "":
+      level: "DEBUG"
+      handlers: ["console"]
+      propagate: false
+    "uvicorn":
+      level: "DEBUG"
+    "sqlalchemy.engine":
+      level: "INFO"  # Set to DEBUG to see SQL queries
+
+# Development Monitoring
+monitoring:
+  metrics:
+    enabled: true
+    port: 9090
+  health_check:
+    enabled: true
+    timeout: 10
+  tracing:
+    enabled: false
+
+# Development Security (relaxed for local development)
+security:
+  authentication:
+    jwt_secret: "dev-jwt-secret-change-in-production"
+    jwt_expiration_hours: 168  # 7 days for development convenience
+  authorization:
+    rbac_enabled: false  # Disabled for easier development
+
+# Development Data Processing
+data_processing:
+  batch_size: 100  # Smaller batches for faster feedback
+  max_retries: 1
+  retry_delay_seconds: 2
+  timeout_seconds: 60
+  checkpointing:
+    enabled: false  # Disabled for development
