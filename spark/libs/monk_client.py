@@ -9,7 +9,7 @@ import random
 from typing import List, Dict, Any, Optional, Tuple
 from contextlib import contextmanager
 import structlog
-from monkdb import client
+from monkdb.client import connect
 
 logger = structlog.get_logger(__name__)
 
@@ -24,7 +24,7 @@ class MonkDBOperationError(Exception):
     pass
 
 
-def monkdb_connect() -> client.Connection:
+def monkdb_connect():
     """
     Establish connection to MonkDB with proper error handling.
     
@@ -36,15 +36,15 @@ def monkdb_connect() -> client.Connection:
     """
     try:
         host = os.getenv('MONK_HOST', 'localhost')
-        port = os.getenv('MONK_PORT', '4200')
+        port = int(os.getenv('MONK_PORT', '4200'))
         user = os.getenv('MONK_USER', 'admin')
-        password = os.getenv('MONK_PASS', 'admin')
-
-        connection_url = f"http://{user}:{password}@{host}:{port}"
+        password = os.getenv('MONK_PASS', 'admin')  # noqa: F841
 
         logger.info("Connecting to MonkDB", host=host, port=port, user=user)
 
-        conn = client.connect(connection_url, username=user)
+        # MonkDB connection using servers list
+        servers = [f"{host}:{port}"]
+        conn = connect(servers=servers)
 
         # Test connection with a simple query
         cursor = conn.cursor()
@@ -129,6 +129,9 @@ def execute_with_retry(cursor, query: str, params: Optional[Tuple] = None, max_r
                 error=str(e)
             )
             time.sleep(wait_time)
+    
+    # This should never be reached due to the exception handling above
+    return []
 
 
 def bulk_insert(cursor, table_name: str, columns: List[str], records: List[Tuple],
@@ -176,7 +179,6 @@ def bulk_insert(cursor, table_name: str, columns: List[str], records: List[Tuple
         for attempt in range(max_retries):
             try:
                 cursor.executemany(query, batch)
-                cursor.connection.commit()
 
                 batch_inserted = len(batch)
                 total_inserted += batch_inserted
@@ -190,7 +192,6 @@ def bulk_insert(cursor, table_name: str, columns: List[str], records: List[Tuple
                 break
 
             except Exception as e:
-                cursor.connection.rollback()
 
                 if attempt == max_retries - 1:
                     logger.error(
@@ -299,7 +300,6 @@ def upsert_dimension(cursor, table_name: str, business_key: str,
                 record_data['is_current'] = True
 
                 _insert_record(cursor, table_name, record_data)
-                cursor.connection.commit()
 
                 logger.info(
                     "SCD Type 2 update completed",
@@ -321,7 +321,6 @@ def upsert_dimension(cursor, table_name: str, business_key: str,
                 WHERE {business_key} = ?
                 """
                 execute_with_retry(cursor, update_query, tuple(update_values))
-                cursor.connection.commit()
 
                 logger.info(
                     "SCD Type 1 update completed",
@@ -339,7 +338,6 @@ def upsert_dimension(cursor, table_name: str, business_key: str,
                 record_data['is_current'] = True
 
             _insert_record(cursor, table_name, record_data)
-            cursor.connection.commit()
 
             logger.info(
                 "New dimension record inserted",
@@ -350,7 +348,6 @@ def upsert_dimension(cursor, table_name: str, business_key: str,
             return 'inserted'
 
     except Exception as e:
-        cursor.connection.rollback()
         logger.error(
             "Dimension upsert failed",
             table=table_name,
@@ -374,7 +371,7 @@ def _insert_record(cursor, table_name: str, record_data: Dict[str, Any]) -> None
     placeholders = ', '.join(['?' for _ in columns])
 
     # Handle special timestamp values
-    processed_values = []
+    processed_values: List[Any] = []
     for value in values:
         if value == 'CURRENT_TIMESTAMP':
             processed_values.append(None)  # Let database handle current timestamp
@@ -546,6 +543,5 @@ def _upsert_fact_batch(cursor, table_name: str, records: List[Dict[str, Any]],
             _insert_record(cursor, table_name, record)
             inserted_count += 1
 
-    cursor.connection.commit()
 
     return {'inserted': inserted_count, 'updated': updated_count}

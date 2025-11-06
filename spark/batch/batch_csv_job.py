@@ -10,7 +10,7 @@ import os
 import yaml
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import structlog
 from pyspark.sql import SparkSession, DataFrame
@@ -34,13 +34,13 @@ except ImportError:
     import packaging.version
     sys.modules['distutils'] = types.ModuleType('distutils')
     sys.modules['distutils.version'] = types.ModuleType('distutils.version')
-    sys.modules['distutils.version'].LooseVersion = packaging.version.Version
+    setattr(sys.modules['distutils.version'], 'LooseVersion', packaging.version.Version)
 
-from spark.libs.utils import (
+from spark.libs.utils import (  # noqa: E402
     generate_time_key, compute_duration, geohash,
     validate_coordinates, normalize_ride_id
 )
-from spark.libs.monk_client import (
+from spark.libs.monk_client import (  # noqa: E402
     get_monk_connection, bulk_insert, upsert_dimension,
     get_dimension_key, bulk_upsert_facts
 )
@@ -73,7 +73,7 @@ class BatchCSVProcessor:
     def __init__(self, config_path: str = "config/batch.yaml"):
         """Initialize the batch processor with configuration."""
         self.config = self._load_config(config_path)
-        self.spark = None
+        self.spark: Optional[SparkSession] = None
         self.batch_id = self._generate_batch_id()
         self.processing_stats = {
             'files_processed': 0,
@@ -195,6 +195,9 @@ class BatchCSVProcessor:
     def read_csv_files(self, file_paths: List[str]) -> DataFrame:
         """Read CSV files into a Spark DataFrame."""
         try:
+            if self.spark is None:
+                raise RuntimeError("Spark session not initialized. Call create_spark_session() first.")
+                
             if not file_paths:
                 logger.info("No CSV files to process")
                 return self.spark.createDataFrame([], StructType([]))
@@ -258,9 +261,11 @@ class BatchCSVProcessor:
 
             valid_count = df.count()
             self.processing_stats['valid_records'] = valid_count
-            self.processing_stats['invalid_records'] = (
-                self.processing_stats['total_records'] - valid_count
-            )
+            total_records = self.processing_stats['total_records']
+            if isinstance(total_records, int):
+                self.processing_stats['invalid_records'] = total_records - int(valid_count)
+            else:
+                self.processing_stats['invalid_records'] = 0
 
             logger.info("Data cleaning and transformation completed",
                        valid_records=valid_count,
@@ -498,8 +503,8 @@ class BatchCSVProcessor:
             logger.info("Starting MonkDB processing", batch_id=self.batch_id)
 
             # Convert to Pandas for MonkDB processing
-            pdf = df.toPandas()
-            records = pdf.to_dict('records')
+            pdf = df.toPandas()  # type: ignore[attr-defined]
+            records = pdf.to_dict('records')  # type: ignore[attr-defined]
 
             if not records:
                 logger.info("No records to process", batch_id=self.batch_id)
@@ -680,9 +685,12 @@ class BatchCSVProcessor:
                 return
 
             self.processing_stats['end_time'] = datetime.now(timezone.utc)
-            processing_duration = (
-                self.processing_stats['end_time'] - self.processing_stats['start_time']
-            ).total_seconds()
+            end_time = self.processing_stats['end_time']
+            start_time = self.processing_stats['start_time']
+            if isinstance(end_time, datetime) and isinstance(start_time, datetime):
+                processing_duration = (end_time - start_time).total_seconds()
+            else:
+                processing_duration = 0.0
 
             metadata_record = {
                 'batch_id': self.batch_id,

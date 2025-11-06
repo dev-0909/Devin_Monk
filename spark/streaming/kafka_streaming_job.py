@@ -8,7 +8,7 @@ import sys
 import types
 import os
 import yaml
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 import structlog
 from pyspark.sql import SparkSession, DataFrame
@@ -31,13 +31,13 @@ except ImportError:
     import packaging.version
     sys.modules['distutils'] = types.ModuleType('distutils')
     sys.modules['distutils.version'] = types.ModuleType('distutils.version')
-    sys.modules['distutils.version'].LooseVersion = packaging.version.Version
+    setattr(sys.modules['distutils.version'], 'LooseVersion', packaging.version.Version)
 
-from spark.libs.utils import (
+from spark.libs.utils import (  # noqa: E402
     generate_time_key, compute_duration, geohash,
     validate_coordinates
 )
-from spark.libs.monk_client import (
+from spark.libs.monk_client import (  # noqa: E402
     get_monk_connection, upsert_dimension,
     get_dimension_key, bulk_upsert_facts
 )
@@ -73,7 +73,7 @@ class KafkaStreamingProcessor:
     def __init__(self, config_path: str = "config/streaming.yaml"):
         """Initialize the streaming processor with configuration."""
         self.config = self._load_config(config_path)
-        self.spark = None
+        self.spark: Optional[SparkSession] = None
         self.schema = self._build_schema()
 
         logger.info("Kafka streaming processor initialized", config_path=config_path)
@@ -157,6 +157,9 @@ class KafkaStreamingProcessor:
     def read_kafka_stream(self) -> DataFrame:
         """Read streaming data from Kafka."""
         try:
+            if self.spark is None:
+                raise RuntimeError("Spark session not initialized. Call create_spark_session() first.")
+            
             kafka_config = self.config['kafka']
 
             kafka_df = (
@@ -299,7 +302,7 @@ class KafkaStreamingProcessor:
 
             # Convert to Pandas for MonkDB processing
             pdf = df.toPandas()
-            records = pdf.to_dict('records')
+            records = pdf.to_dict('records')  # type: ignore
 
             logger.info("Processing batch", batch_id=batch_id, record_count=len(records))
 
