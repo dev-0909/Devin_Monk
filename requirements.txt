@@ -1,8 +1,9 @@
 # Core Data Platform Dependencies
 pyspark==3.5.3
 apache-airflow==2.10.4
-kafka-python==2.0.2
+confluent-kafka==2.3.0
 pymongo==4.6.0
+monkdb==1.0.5
 
 # Configuration and Logging
 pydantic==2.5.2
@@ -41,3 +42,11 @@ psycopg2-binary==2.9.9
 click==8.1.7
 rich==13.7.0
 tenacity==8.2.3
+
+# ETL and Geospatial Processing
+geohash2==1.1
+packaging==23.2
+types-PyYAML==6.0.12.12
+
+# Spark Streaming Dependencies
+py4j==0.10.9.7

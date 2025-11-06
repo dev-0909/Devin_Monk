@@ -1,0 +1,154 @@
+# Streaming ETL Configuration
+# Configuration for Kafka streaming jobs and real-time data processing
+
+kafka:
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}"
+  topics:
+    cab_stream: "${KAFKA_TOPIC_CAB_STREAM:cab_stream}"
+    dead_letter: "${KAFKA_TOPIC_DLQ:streaming_dlq}"
+  consumer:
+    group_id: "${KAFKA_CONSUMER_GROUP:spark_streaming_etl}"
+    auto_offset_reset: "${KAFKA_AUTO_OFFSET_RESET:latest}"
+    enable_auto_commit: false
+    max_poll_records: 1000
+    session_timeout_ms: 30000
+    heartbeat_interval_ms: 10000
+  producer:
+    acks: "all"
+    retries: 3
+    batch_size: 16384
+    linger_ms: 5
+    buffer_memory: 33554432
+
+spark:
+  app_name: "KafkaToMonkDB_CabStream"
+  master: "${SPARK_MASTER:local[*]}"
+  config:
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.sql.streaming.checkpointLocation: "${SPARK_CHECKPOINT_DIR:./checkpoints/streaming}"
+    spark.sql.streaming.stateStore.maintenanceInterval: "60s"
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+    spark.sql.execution.arrow.pyspark.enabled: true
+  packages:
+    - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1"
+    - "org.apache.kafka:kafka-clients:3.5.1"
+  streaming:
+    trigger_interval: "${SPARK_STREAMING_TRIGGER:10 seconds}"
+    max_files_per_trigger: 100
+    checkpoint_interval: "30s"
+    watermark_delay: "1 minute"
+
+monkdb:
+  connection:
+    host: "${MONK_HOST:localhost}"
+    port: "${MONK_PORT:4200}"
+    username: "${MONK_USER:admin}"
+    password: "${MONK_PASS:admin}"
+    schema: "${MONK_SCHEMA:etl}"
+    timeout: 30
+    pool_size: 10
+  tables:
+    fact_rides: "${MONK_TABLE_FACT_RIDES:fact_rides}"
+    dim_driver: "${MONK_TABLE_DIM_DRIVER:dim_driver}"
+    dim_vehicle: "${MONK_TABLE_DIM_VEHICLE:dim_vehicle}"
+    dim_geolocation: "${MONK_TABLE_DIM_GEOLOCATION:dim_geolocation}"
+    dim_time: "${MONK_TABLE_DIM_TIME:dim_time}"
+  batch_processing:
+    batch_size: "${MONK_BATCH_SIZE:1000}"
+    max_retries: "${MONK_MAX_RETRIES:3}"
+    retry_delay_seconds: "${MONK_RETRY_DELAY:1}"
+    commit_interval: "${MONK_COMMIT_INTERVAL:5000}"
+
+schema:
+  cab_stream:
+    ride_id: "string"
+    driver_id: "string"
+    vehicle_id: "string"
+    pickup_ts: "timestamp"
+    dropoff_ts: "timestamp"
+    pickup_lat: "double"
+    pickup_lon: "double"
+    dropoff_lat: "double"
+    dropoff_lon: "double"
+    distance_km: "double"
+    fare_amount: "double"
+  derived_fields:
+    duration_min: "integer"
+    pickup_time_key: "integer"
+    dropoff_time_key: "integer"
+    pickup_geohash: "string"
+    dropoff_geohash: "string"
+
+processing:
+  validation:
+    required_fields:
+      - "ride_id"
+      - "driver_id"
+      - "vehicle_id"
+      - "pickup_ts"
+      - "pickup_lat"
+      - "pickup_lon"
+    coordinate_bounds:
+      lat_min: -90.0
+      lat_max: 90.0
+      lon_min: -180.0
+      lon_max: 180.0
+    fare_bounds:
+      min_fare: 0.0
+      max_fare: 10000.0
+    distance_bounds:
+      min_distance: 0.0
+      max_distance: 1000.0
+  deduplication:
+    window_duration: "1 hour"
+    key_columns: ["ride_id"]
+  error_handling:
+    max_errors_per_batch: 100
+    error_threshold_percentage: 10.0
+    dead_letter_queue_enabled: true
+
+geospatial:
+  geohash_precision: 7
+  coordinate_precision: 6
+  default_location:
+    lat: 0.0
+    lon: 0.0
+    geohash: "s000000"
+
+logging:
+  level: "${LOG_LEVEL:INFO}"
+  format: "json"
+  structured: true
+  fields:
+    service: "spark_streaming_etl"
+    component: "kafka_streaming_job"
+  metrics:
+    enabled: true
+    interval_seconds: 30
+    include_jvm_metrics: true
+
+monitoring:
+  health_check:
+    enabled: true
+    interval_seconds: 60
+  metrics:
+    kafka_lag_threshold: 10000
+    processing_delay_threshold_ms: 30000
+    error_rate_threshold: 0.05
+  alerts:
+    enabled: "${MONITORING_ALERTS_ENABLED:false}"
+    webhook_url: "${MONITORING_WEBHOOK_URL:}"
+
+performance:
+  parallelism:
+    kafka_partitions: "${KAFKA_PARTITIONS:4}"
+    spark_partitions: "${SPARK_PARTITIONS:8}"
+  memory:
+    executor_memory: "${SPARK_EXECUTOR_MEMORY:2g}"
+    driver_memory: "${SPARK_DRIVER_MEMORY:1g}"
+  optimization:
+    enable_predicate_pushdown: true
+    enable_column_pruning: true
+    cache_dimension_tables: true
+    dimension_cache_ttl_minutes: 60
