@@ -1,0 +1,225 @@
+# Batch ETL Configuration
+# Configuration for CSV batch processing and historical data ingestion
+
+spark:
+  app_name: "BatchCSV_CabRides_ETL"
+  master: "${SPARK_MASTER:local[*]}"
+  config:
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.sql.adaptive.skewJoin.enabled: true
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+    spark.sql.execution.arrow.pyspark.enabled: true
+    spark.sql.files.maxPartitionBytes: "134217728"  # 128MB
+    spark.sql.files.openCostInBytes: "4194304"      # 4MB
+  memory:
+    executor_memory: "${SPARK_EXECUTOR_MEMORY:4g}"
+    driver_memory: "${SPARK_DRIVER_MEMORY:2g}"
+    executor_cores: "${SPARK_EXECUTOR_CORES:2}"
+    max_result_size: "2g"
+
+data_sources:
+  input:
+    base_path: "${BATCH_INPUT_PATH:/data/batch/rides_incoming/}"
+    file_format: "csv"
+    file_pattern: "*.csv"
+    header: true
+    delimiter: ","
+    quote: "\""
+    escape: "\\"
+    null_value: ""
+    date_format: "yyyy-MM-dd"
+    timestamp_format: "yyyy-MM-dd HH:mm:ss"
+    multiline: false
+    encoding: "UTF-8"
+  archive:
+    enabled: "${BATCH_ARCHIVE_ENABLED:true}"
+    path: "${BATCH_ARCHIVE_PATH:/data/batch/rides_processed/}"
+    retention_days: "${BATCH_ARCHIVE_RETENTION:90}"
+  error:
+    path: "${BATCH_ERROR_PATH:/data/batch/rides_errors/}"
+    max_error_files: 1000
+
+monkdb:
+  connection:
+    host: "${MONK_HOST:localhost}"
+    port: "${MONK_PORT:4200}"
+    username: "${MONK_USER:admin}"
+    password: "${MONK_PASS:admin}"
+    schema: "${MONK_SCHEMA:etl}"
+    timeout: 60
+    pool_size: 20
+  tables:
+    fact_rides: "${MONK_TABLE_FACT_RIDES:fact_rides}"
+    dim_driver: "${MONK_TABLE_DIM_DRIVER:dim_driver}"
+    dim_vehicle: "${MONK_TABLE_DIM_VEHICLE:dim_vehicle}"
+    dim_geolocation: "${MONK_TABLE_DIM_GEOLOCATION:dim_geolocation}"
+    dim_time: "${MONK_TABLE_DIM_TIME:dim_time}"
+    batch_metadata: "${MONK_TABLE_BATCH_METADATA:batch_metadata}"
+  batch_processing:
+    batch_size: "${MONK_BATCH_SIZE:2000}"
+    max_retries: "${MONK_MAX_RETRIES:5}"
+    retry_delay_seconds: "${MONK_RETRY_DELAY:2}"
+    commit_interval: "${MONK_COMMIT_INTERVAL:10000}"
+    parallel_writes: "${MONK_PARALLEL_WRITES:4}"
+
+schema:
+  input_csv:
+    ride_id: "string"
+    driver_id: "string"
+    vehicle_id: "string"
+    pickup_timestamp: "string"  # Will be parsed to timestamp
+    dropoff_timestamp: "string" # Will be parsed to timestamp
+    pickup_latitude: "string"   # Will be parsed to double
+    pickup_longitude: "string"  # Will be parsed to double
+    dropoff_latitude: "string"  # Will be parsed to double
+    dropoff_longitude: "string" # Will be parsed to double
+    distance_km: "string"       # Will be parsed to double
+    fare_amount: "string"       # Will be parsed to double
+    payment_type: "string"
+    tip_amount: "string"        # Will be parsed to double
+    total_amount: "string"      # Will be parsed to double
+  derived_fields:
+    duration_min: "integer"
+    pickup_time_key: "integer"
+    dropoff_time_key: "integer"
+    pickup_geohash: "string"
+    dropoff_geohash: "string"
+    batch_id: "string"
+    processing_timestamp: "timestamp"
+
+processing:
+  validation:
+    required_fields:
+      - "ride_id"
+      - "driver_id"
+      - "vehicle_id"
+      - "pickup_timestamp"
+      - "pickup_latitude"
+      - "pickup_longitude"
+    data_quality_checks:
+      coordinate_bounds:
+        lat_min: -90.0
+        lat_max: 90.0
+        lon_min: -180.0
+        lon_max: 180.0
+      fare_bounds:
+        min_fare: 0.0
+        max_fare: 10000.0
+      distance_bounds:
+        min_distance: 0.0
+        max_distance: 1000.0
+      timestamp_bounds:
+        min_year: 2020
+        max_year: 2030
+  deduplication:
+    enabled: true
+    key_columns: ["ride_id"]
+    strategy: "keep_last"  # keep_first, keep_last, keep_all
+    partition_columns: ["pickup_date"]
+  cleansing:
+    trim_strings: true
+    normalize_case: "lower"
+    remove_special_chars: false
+    standardize_nulls: true
+    null_representations: ["", "NULL", "null", "N/A", "n/a"]
+  transformation:
+    coordinate_precision: 6
+    geohash_precision: 7
+    time_zone: "UTC"
+    date_partitioning: true
+
+batch_metadata:
+  tracking:
+    enabled: true
+    include_file_stats: true
+    include_processing_stats: true
+  fields:
+    batch_id: "auto_generated"
+    file_name: "source_file"
+    file_size_bytes: "file_metadata"
+    record_count: "computed"
+    processing_start_time: "auto_timestamp"
+    processing_end_time: "auto_timestamp"
+    status: "computed"  # success, failed, partial
+    error_count: "computed"
+    inserted_count: "computed"
+    updated_count: "computed"
+    skipped_count: "computed"
+
+error_handling:
+  strategy: "continue_on_error"  # fail_fast, continue_on_error, skip_file
+  max_errors_per_file: 1000
+  error_threshold_percentage: 15.0
+  quarantine_bad_records: true
+  detailed_error_logging: true
+  error_categories:
+    - "validation_error"
+    - "parsing_error"
+    - "constraint_violation"
+    - "database_error"
+
+performance:
+  parallelism:
+    file_processing: "${BATCH_FILE_PARALLELISM:4}"
+    record_processing: "${BATCH_RECORD_PARALLELISM:8}"
+  optimization:
+    enable_predicate_pushdown: true
+    enable_column_pruning: true
+    cache_dimension_lookups: true
+    dimension_cache_size: 10000
+    use_broadcast_joins: true
+    broadcast_threshold: "10MB"
+  partitioning:
+    output_partitions: "${BATCH_OUTPUT_PARTITIONS:16}"
+    partition_by_date: true
+    coalesce_small_files: true
+    target_file_size_mb: 256
+
+scheduling:
+  frequency: "${BATCH_FREQUENCY:daily}"  # hourly, daily, weekly
+  time_window:
+    start_hour: "${BATCH_START_HOUR:2}"
+    end_hour: "${BATCH_END_HOUR:6}"
+  dependencies:
+    wait_for_files: true
+    file_age_threshold_minutes: 5
+    max_wait_time_minutes: 60
+
+monitoring:
+  metrics:
+    enabled: true
+    include_file_metrics: true
+    include_processing_metrics: true
+    include_data_quality_metrics: true
+  alerts:
+    enabled: "${BATCH_ALERTS_ENABLED:false}"
+    webhook_url: "${BATCH_WEBHOOK_URL:}"
+    thresholds:
+      processing_time_minutes: 120
+      error_rate_percentage: 10.0
+      file_size_variance_percentage: 50.0
+
+logging:
+  level: "${LOG_LEVEL:INFO}"
+  format: "json"
+  structured: true
+  fields:
+    service: "spark_batch_etl"
+    component: "batch_csv_job"
+  file_logging:
+    enabled: true
+    path: "${BATCH_LOG_PATH:/logs/batch/}"
+    rotation: "daily"
+    retention_days: 30
+
+data_lineage:
+  tracking:
+    enabled: "${DATA_LINEAGE_ENABLED:true}"
+    include_transformations: true
+    include_data_sources: true
+  metadata:
+    source_system: "csv_files"
+    data_classification: "internal"
+    retention_policy: "7_years"
+    privacy_level: "restricted"
